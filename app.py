@@ -3,7 +3,7 @@ from google import genai
 import time
 
 # --- ページ設定 ---
-# アイコン画像がある場合は "icon.png" に、なければ絵文字などに戻してください
+# ブラウザのタブ名も変更
 st.set_page_config(page_title="AI DEBATE", page_icon="icon.png", layout="wide")
 
 # --- セッション状態の初期化 ---
@@ -14,11 +14,21 @@ if "conversation_log" not in st.session_state:
 if "summary_text" not in st.session_state:
     st.session_state.summary_text = ""
 
+# --- リセット機能の関数 ---
+def reset_settings():
+    keys_to_reset = ["topic", "global_rules", "num_agents"]
+    for i in range(4):
+        keys_to_reset.extend([f"name_{i}", f"icon_{i}", f"prompt_{i}"])
+    
+    for key in keys_to_reset:
+        if key in st.session_state:
+            del st.session_state[key]
+    st.rerun()
+
 # --- サイドバー：設定エリア ---
 with st.sidebar:
     st.header("⚙️ システム設定")
     
-    # APIキー入力
     default_key = st.secrets.get("DEFAULT_API_KEY", "")
     user_api_key = st.text_input(
         "Google API Keyを入力",
@@ -26,14 +36,11 @@ with st.sidebar:
         type="password",
         help="APIキーを入力すると、利用可能なモデル一覧が読み込まれます。"
     )
-    # APIキー取得リンク
     st.markdown("[🔗 APIキーの取得・確認はこちら](https://aistudio.google.com/app/apikey)")
     
     st.divider()
     
-    # モデル選択ロジック
     model_options = ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash"]
-    
     if user_api_key:
         try:
             temp_client = genai.Client(api_key=user_api_key)
@@ -47,31 +54,43 @@ with st.sidebar:
                 st.success(f"✅ {len(model_options)}個のモデルを検出")
         except Exception:
             pass
-
     model_name = st.selectbox("使用するモデル", model_options)
     
     max_turns = st.slider("会話の往復回数", 3, 50, 6)
     speed = st.slider("表示速度（秒）", 0.5, 5.0, 1.5)
     
-    # リセットボタン
-    if st.button("🗑️ 履歴をクリアしてリセット"):
-        st.session_state.is_running = False
-        st.session_state.conversation_log = []
-        st.session_state.summary_text = ""
-        st.rerun()
+    st.divider()
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🗑️ 履歴クリア"):
+            st.session_state.is_running = False
+            st.session_state.conversation_log = []
+            st.session_state.summary_text = ""
+            st.rerun()
+    with col2:
+        if st.button("⚙️ 設定リセット"):
+            reset_settings()
 
 # --- メインエリア ---
+# タイトルを変更
 st.title("🚀 AI DEBATE")
 
-# 【重要】レイアウトに関わる設定はフォームの外に出す（即時反映させるため）
-topic = st.text_input("🗣️ 議論・会話のテーマ", value="")
-num_agents = st.number_input("参加人数", min_value=2, max_value=4, value=2)
+# テーマの初期値を空白（value=""）に変更
+topic = st.text_input("🗣️ 議論・会話のテーマ", value="", placeholder="例：AIは人間の仕事を奪うか？", key="topic")
+num_agents = st.number_input("参加人数", min_value=2, max_value=4, value=2, key="num_agents")
 
-# ここから下をフォームにする（入力中の再読み込みを防ぐため）
+# 入力フォーム
 with st.form("settings_form"):
-    st.subheader("👥 キャラクター設定")
+    st.subheader("📜 全体ルール（終了条件など）")
+    global_rules = st.text_area(
+        "参加者全員が守るべきルールを入力してください",
+        value="相手の意見に納得した場合は「【合意】」と宣言して議論を終了してください。過激な発言は控えてください。",
+        height=70,
+        key="global_rules"
+    )
     
-    # num_agentsの値を使ってカラムを作る
+    st.subheader("👥 キャラクター設定")
     cols = st.columns(num_agents)
     agents_config = []
     
@@ -84,9 +103,7 @@ with st.form("settings_form"):
     
     for i, col in enumerate(cols):
         with col:
-            # デフォルト値の取得（人数が増えてもエラーにならないように調整）
             def_role = default_roles[i] if i < len(default_roles) else default_roles[0]
-            
             st.markdown(f"**参加者 {i+1}**")
             name = st.text_input(f"名前", value=def_role["name"], key=f"name_{i}")
             icon = st.text_input(f"アイコン", value=def_role["icon"], key=f"icon_{i}")
@@ -94,7 +111,6 @@ with st.form("settings_form"):
             
             agents_config.append({"name": name, "icon": icon, "system_instruction": prompt})
     
-    # フォーム送信ボタン
     st.markdown("---")
     start_submitted = st.form_submit_button("🚀 議論を開始する", type="primary")
 
@@ -102,6 +118,9 @@ with st.form("settings_form"):
 if start_submitted:
     if not user_api_key:
         st.error("⚠️ サイドバーでAPIキーを入力してください")
+    elif not topic:
+        # テーマが空のときはエラーを出して止める処理を追加
+        st.error("⚠️ テーマを入力してください！")
     else:
         st.session_state.is_running = True
         st.session_state.conversation_log = []
@@ -112,15 +131,20 @@ if st.session_state.is_running:
     try:
         client = genai.Client(api_key=user_api_key)
         
-        # チャットセッションの準備
         chats = []
         for agent in agents_config:
-            sys_inst = f"名前：{agent['name']}\n役割：{agent['system_instruction']}\nテーマ：{topic}\n他の参加者と議論してください。"
+            sys_inst = f"""
+            あなたの名前：{agent['name']}
+            あなたの役割：{agent['system_instruction']}
+            議論のテーマ：{topic}
+            【全体ルール（絶対遵守）】
+            {global_rules}
+            他の参加者と対話してください。
+            """
             chats.append(client.chats.create(model=model_name, config={"system_instruction": sys_inst}))
 
-        chat_container = st.container()
+        chat_container = st.container(height=500, border=True)
         
-        # ログがあれば表示
         if not st.session_state.conversation_log:
             last_message = f"テーマ「{topic}」について議論開始。{agents_config[0]['name']}からどうぞ。"
         else:
@@ -131,7 +155,6 @@ if st.session_state.is_running:
             last_entry = st.session_state.conversation_log[-1]
             last_message = f"{last_entry['name']}: {last_entry['text']}"
 
-        # 進行
         current_turns = len(st.session_state.conversation_log)
         
         if current_turns < max_turns:
@@ -165,12 +188,10 @@ if st.session_state.is_running:
             st.session_state.is_running = False
             st.progress(1.0)
             
-            # 要約生成
             if not st.session_state.summary_text:
                 with st.status("📝 議論をまとめています...", expanded=True):
                     full_text = "\n\n".join([f"【{x['name']}】\n{x['text']}" for x in st.session_state.conversation_log])
                     summary_prompt = f"以下の議論を要約し、結論をまとめてください。\n\n{full_text}"
-                    
                     try:
                         res = client.models.generate_content(model=model_name, contents=summary_prompt)
                         st.session_state.summary_text = res.text
@@ -180,7 +201,6 @@ if st.session_state.is_running:
     except Exception as e:
         st.error(f"全体エラー: {e}")
 
-# --- 要約の表示 ---
 if st.session_state.summary_text:
     st.divider()
     st.subheader("📊 結論レポート")

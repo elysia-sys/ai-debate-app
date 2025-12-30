@@ -3,7 +3,12 @@ from google import genai
 import time
 
 # --- ページ設定 ---
-st.set_page_config(page_title="AIマルチトーク Pro", page_icon="📝", layout="wide")
+# アイコンに画像ファイルを指定する
+st.set_page_config(
+    page_title="AI-DABATE",   # ← スマホのホーム画面での「アプリ名」になります
+    page_icon="icon.png",    # ← さっき上げた画像ファイルの名前
+    layout="wide"
+)
 
 # --- セッション状態の初期化（ボタンの押し忘れ防止） ---
 if "is_running" not in st.session_state:
@@ -25,6 +30,8 @@ with st.sidebar:
         type="password",
         help="APIキーを入力すると、利用可能なモデル一覧が読み込まれます。"
     )
+    
+    st.sidebar.markdown("[🔗 APIキーの取得・確認はこちら (Google AI Studio)](https://aistudio.google.com/app/apikey)")
     
     st.divider()
     

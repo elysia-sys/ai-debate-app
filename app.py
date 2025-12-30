@@ -20,32 +20,36 @@ with st.sidebar:
     st.divider()
     
     # 2. モデル選択（APIキーから動的に取得）
-    model_options = ["gemini-2.0-flash", "gemini-1.5-flash"] # デフォルト（キーがない場合）
+    # デフォルト（キーがない、または取得失敗時用）
+    model_options = ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash"]
     
     if user_api_key:
         try:
             # 一時的にクライアントを作ってモデル一覧を取得
             temp_client = genai.Client(api_key=user_api_key)
             fetched_models = []
+            
             # APIからモデルリストを取得
+            # 【修正点】単純に名前に "gemini" が含まれるモデルだけを抽出するように変更
             for m in temp_client.models.list():
-                # "generateContent" に対応し、かつ "gemini" を含むモデルだけ抽出
-                if "generateContent" in m.supported_generation_methods and "gemini" in m.name:
+                if "gemini" in m.name.lower():
                     # "models/" という接頭辞を削除してリストに追加
                     clean_name = m.name.replace("models/", "")
                     fetched_models.append(clean_name)
             
             if fetched_models:
-                model_options = sorted(fetched_models, reverse=True) # 新しい順に並べる
+                # 重複を消してソート
+                model_options = sorted(list(set(fetched_models)), reverse=True)
                 st.success("✅ モデル一覧を取得しました")
             
         except Exception as e:
-            st.error(f"エラー詳細: {e}")  # ← これを追加！本当の原因を表示させる
-            st.warning("一覧取得に失敗したため、基本リストを使います。")
+            # エラーが出ても止まらず、デフォルトリストを使う
+            st.error(f"モデル一覧の取得エラー: {e}")
+            st.warning("基本リストを使用します。")
 
     model_name = st.selectbox("使用するモデル", model_options)
     
-    # 3. パラメータ（最大数を50に増加）
+    # 3. パラメータ
     max_turns = st.slider("会話の往復回数（ターン数）", min_value=3, max_value=50, value=6)
     speed = st.slider("表示速度（待機秒数）", 0.5, 5.0, 1.5)
 
@@ -54,7 +58,7 @@ st.title("📝 AIマルチトーク Pro")
 st.markdown("議論の設定を行うと、AIが会話を行い、最後に**要約と結論**をまとめます。")
 
 # テーマ設定
-topic = st.text_input("🗣️ 議論・会話のテーマ", value="")
+topic = st.text_input("🗣️ 議論・会話のテーマ", value="AIは人間の創造性を奪うのか、拡張するのか？")
 
 # キャラクター設定
 st.subheader("👥 キャラクター設定")
@@ -87,84 +91,4 @@ if st.button("🚀 議論を開始する", type="primary"):
         st.error("APIキーを入力してください！")
         st.stop()
     
-    # 全体の履歴を保存するリスト（要約用）
-    full_conversation_log = []
-    
-    try:
-        client = genai.Client(api_key=user_api_key)
-        
-        # 各エージェントの準備
-        chats = []
-        for agent in agents_config:
-            sys_inst = f"名前：{agent['name']}\n役割：{agent['system_instruction']}\nテーマ：{topic}\n他の参加者と議論してください。"
-            chats.append(client.chats.create(model=model_name, config={"system_instruction": sys_inst}))
-
-        chat_container = st.container()
-        last_message = f"テーマ「{topic}」について議論を開始してください。まずは{agents_config[0]['name']}さんからどうぞ。"
-        
-        # === 議論ループ ===
-        count = 0
-        progress_bar = st.progress(0)
-        
-        while count < max_turns:
-            current_idx = count % num_agents
-            agent = agents_config[current_idx]
-            chat = chats[current_idx]
-            
-            with chat_container:
-                with st.chat_message(agent["name"], avatar=agent["icon"]):
-                    placeholder = st.empty()
-                    try:
-                        # 発言生成
-                        response = chat.send_message(f"直前の発言: {last_message}\n\nこれを受けて発言してください。")
-                        placeholder.markdown(response.text)
-                        
-                        # ログ保存
-                        last_message = f"{agent['name']}: {response.text}"
-                        full_conversation_log.append(f"【{agent['name']}】\n{response.text}")
-                        
-                    except Exception as e:
-                        st.error(f"エラー: {e}")
-                        break
-            
-            count += 1
-            progress_bar.progress(count / max_turns)
-            time.sleep(speed)
-        
-        # === 最終要約フェーズ ===
-        st.divider()
-        st.subheader("📊 議論のまとめと結論")
-        
-        with st.status("📝 AIが議事録を作成中...", expanded=True) as status:
-            try:
-                # ログを一つのテキストに結合
-                log_text = "\n\n".join(full_conversation_log)
-                
-                # 要約用のプロンプト
-                summary_prompt = f"""
-                あなたは優秀な書記官です。以下の議論ログを読んで、レポートを作成してください。
-
-                ## 議論ログ
-                {log_text}
-
-                ## 出力フォーマット
-                1. **議論のテーマ**: {topic}
-                2. **各参加者の主な主張**: (箇条書きで簡潔に)
-                3. **議論の要約**: (対話の流れを要約)
-                4. **最終結論**: (議論から導き出される結論、または合意点、残された課題)
-                """
-                
-                # 要約生成（新しいチャットセッションを使わず、単発で生成）
-                summary_response = client.models.generate_content(
-                    model=model_name,
-                    contents=summary_prompt
-                )
-                
-                st.markdown(summary_response.text)
-                status.update(label="✅ 作成完了！", state="complete", expanded=True)
-                
-            except Exception as e:
-                st.error(f"要約の作成中にエラーが発生しました: {e}")
-
-    except Exception as e:
-        st.error(f"開始できませんでした。APIキーやモデルを確認してください: {e}")
+    # 全体の履歴を保存するリスト（

@@ -65,7 +65,7 @@ with st.sidebar:
         st.rerun()
 
 # --- メインエリア ---
-st.title("📝 AIマルチトーク Pro")
+st.title("📝 AI-DABATE")
 
 # 入力フォーム（誤動作防止のためフォーム化）
 with st.form("settings_form"):

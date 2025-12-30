@@ -3,7 +3,6 @@ from google import genai
 import time
 
 # --- ページ設定 ---
-# ブラウザのタブ名も変更
 st.set_page_config(page_title="AI DEBATE", page_icon="icon.png", layout="wide")
 
 # --- セッション状態の初期化 ---
@@ -14,16 +13,31 @@ if "conversation_log" not in st.session_state:
 if "summary_text" not in st.session_state:
     st.session_state.summary_text = ""
 
-# --- リセット機能の関数 ---
+# --- 強力なリセット機能（コールバック関数） ---
 def reset_settings():
-    keys_to_reset = ["topic", "global_rules", "num_agents"]
-    for i in range(4):
-        keys_to_reset.extend([f"name_{i}", f"icon_{i}", f"prompt_{i}"])
+    """ボタンが押された瞬間に実行され、強制的に値を初期値に戻す"""
     
-    for key in keys_to_reset:
-        if key in st.session_state:
-            del st.session_state[key]
-    st.rerun()
+    # 1. 基本設定をリセット
+    st.session_state["topic"] = ""
+    st.session_state["num_agents"] = 2
+    st.session_state["global_rules"] = "相手の意見に納得した場合は「【合意】」と宣言して議論を終了してください。過激な発言は控えてください。"
+    
+    # 2. キャラクター設定のデフォルト値を用意
+    default_roles = [
+        {"name": "肯定派", "icon": "⭕", "prompt": "メリットを強調する肯定的な立場。"},
+        {"name": "否定派", "icon": "❌", "prompt": "リスクを指摘する批判的な立場。"},
+        {"name": "司会者", "icon": "🎤", "prompt": "中立的な立場で議論を整理する。"},
+        {"name": "野次馬", "icon": "🫣", "prompt": "無責任に議論を茶化す。"}
+    ]
+    
+    # 3. 全員の入力欄を強制的にデフォルト値で上書き
+    for i in range(4):
+        # 配列外参照を防ぐためのロジック
+        role = default_roles[i] if i < len(default_roles) else default_roles[0]
+        
+        st.session_state[f"name_{i}"] = role["name"]
+        st.session_state[f"icon_{i}"] = role["icon"]
+        st.session_state[f"prompt_{i}"] = role["prompt"]
 
 # --- サイドバー：設定エリア ---
 with st.sidebar:
@@ -68,15 +82,15 @@ with st.sidebar:
             st.session_state.conversation_log = []
             st.session_state.summary_text = ""
             st.rerun()
+            
     with col2:
-        if st.button("⚙️ 設定リセット"):
-            reset_settings()
+        # 【重要】on_click=reset_settings を使うことで確実に実行させる
+        st.button("⚙️ 設定リセット", on_click=reset_settings)
 
 # --- メインエリア ---
-# タイトルを変更
 st.title("🚀 AI DEBATE")
 
-# テーマの初期値を空白（value=""）に変更
+# テーマ入力（key="topic"を指定しているので、リセット関数から操作可能）
 topic = st.text_input("🗣️ 議論・会話のテーマ", value="", placeholder="例：AIは人間の仕事を奪うか？", key="topic")
 num_agents = st.number_input("参加人数", min_value=2, max_value=4, value=2, key="num_agents")
 
@@ -94,6 +108,7 @@ with st.form("settings_form"):
     cols = st.columns(num_agents)
     agents_config = []
     
+    # リセット関数内と同じ定義だが、初期表示用にも必要
     default_roles = [
         {"name": "肯定派", "icon": "⭕", "prompt": "メリットを強調する肯定的な立場。"},
         {"name": "否定派", "icon": "❌", "prompt": "リスクを指摘する批判的な立場。"},
@@ -105,6 +120,8 @@ with st.form("settings_form"):
         with col:
             def_role = default_roles[i] if i < len(default_roles) else default_roles[0]
             st.markdown(f"**参加者 {i+1}**")
+            
+            # keyを指定してリセット関数から制御できるようにする
             name = st.text_input(f"名前", value=def_role["name"], key=f"name_{i}")
             icon = st.text_input(f"アイコン", value=def_role["icon"], key=f"icon_{i}")
             prompt = st.text_area(f"役割", value=def_role["prompt"], height=70, key=f"prompt_{i}")
@@ -119,7 +136,6 @@ if start_submitted:
     if not user_api_key:
         st.error("⚠️ サイドバーでAPIキーを入力してください")
     elif not topic:
-        # テーマが空のときはエラーを出して止める処理を追加
         st.error("⚠️ テーマを入力してください！")
     else:
         st.session_state.is_running = True

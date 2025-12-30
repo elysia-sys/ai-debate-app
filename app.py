@@ -3,14 +3,10 @@ from google import genai
 import time
 
 # --- ページ設定 ---
-# アイコンに画像ファイルを指定する
-st.set_page_config(
-    page_title="AI-DABATE",   # ← スマホのホーム画面での「アプリ名」になります
-    page_icon="icon.png",    # ← さっき上げた画像ファイルの名前
-    layout="wide"
-)
+# アイコン画像がある場合は "icon.png" に、なければ絵文字などに戻してください
+st.set_page_config(page_title="AI DEBATE", page_icon="icon.png", layout="wide")
 
-# --- セッション状態の初期化（ボタンの押し忘れ防止） ---
+# --- セッション状態の初期化 ---
 if "is_running" not in st.session_state:
     st.session_state.is_running = False
 if "conversation_log" not in st.session_state:
@@ -30,8 +26,8 @@ with st.sidebar:
         type="password",
         help="APIキーを入力すると、利用可能なモデル一覧が読み込まれます。"
     )
-    
-    st.sidebar.markdown("[🔗 APIキーの取得・確認はこちら (Google AI Studio)](https://aistudio.google.com/app/apikey)")
+    # APIキー取得リンク
+    st.markdown("[🔗 APIキーの取得・確認はこちら](https://aistudio.google.com/app/apikey)")
     
     st.divider()
     
@@ -50,7 +46,7 @@ with st.sidebar:
                 model_options = sorted(list(set(fetched_models)), reverse=True)
                 st.success(f"✅ {len(model_options)}個のモデルを検出")
         except Exception:
-            pass # エラー時は黙ってデフォルトを使う
+            pass
 
     model_name = st.selectbox("使用するモデル", model_options)
     
@@ -65,15 +61,17 @@ with st.sidebar:
         st.rerun()
 
 # --- メインエリア ---
-st.title("📝 AI-DABATE")
+st.title("🚀 AI DEBATE")
 
-# 入力フォーム（誤動作防止のためフォーム化）
+# 【重要】レイアウトに関わる設定はフォームの外に出す（即時反映させるため）
+topic = st.text_input("🗣️ 議論・会話のテーマ", value="")
+num_agents = st.number_input("参加人数", min_value=2, max_value=4, value=2)
+
+# ここから下をフォームにする（入力中の再読み込みを防ぐため）
 with st.form("settings_form"):
-    topic = st.text_input("🗣️ 議論・会話のテーマ", value="")
-    
     st.subheader("👥 キャラクター設定")
-    num_agents = st.number_input("参加人数", 2, 4, 2)
     
+    # num_agentsの値を使ってカラムを作る
     cols = st.columns(num_agents)
     agents_config = []
     
@@ -86,21 +84,25 @@ with st.form("settings_form"):
     
     for i, col in enumerate(cols):
         with col:
+            # デフォルト値の取得（人数が増えてもエラーにならないように調整）
             def_role = default_roles[i] if i < len(default_roles) else default_roles[0]
-            name = st.text_input(f"名前 {i+1}", value=def_role["name"])
-            icon = st.text_input(f"アイコン {i+1}", value=def_role["icon"])
-            prompt = st.text_area(f"役割 {i+1}", value=def_role["prompt"], height=70)
+            
+            st.markdown(f"**参加者 {i+1}**")
+            name = st.text_input(f"名前", value=def_role["name"], key=f"name_{i}")
+            icon = st.text_input(f"アイコン", value=def_role["icon"], key=f"icon_{i}")
+            prompt = st.text_area(f"役割", value=def_role["prompt"], height=70, key=f"prompt_{i}")
+            
             agents_config.append({"name": name, "icon": icon, "system_instruction": prompt})
     
     # フォーム送信ボタン
+    st.markdown("---")
     start_submitted = st.form_submit_button("🚀 議論を開始する", type="primary")
 
 # --- 実行ロジック ---
 if start_submitted:
     if not user_api_key:
-        st.error("⚠️ APIキーを入力してください")
+        st.error("⚠️ サイドバーでAPIキーを入力してください")
     else:
-        # 開始フラグをオンにして、ログをクリア
         st.session_state.is_running = True
         st.session_state.conversation_log = []
         st.session_state.summary_text = ""
@@ -118,27 +120,23 @@ if st.session_state.is_running:
 
         chat_container = st.container()
         
-        # ログがあれば表示、なければ開始メッセージ
+        # ログがあれば表示
         if not st.session_state.conversation_log:
             last_message = f"テーマ「{topic}」について議論開始。{agents_config[0]['name']}からどうぞ。"
         else:
-            # 既にログがある場合は画面に復元（再描画対策）
             for log in st.session_state.conversation_log:
                 with chat_container:
                     with st.chat_message(log["name"], avatar=log["icon"]):
                         st.markdown(log["text"])
-            # 最後のメッセージを取得して続きから
             last_entry = st.session_state.conversation_log[-1]
             last_message = f"{last_entry['name']}: {last_entry['text']}"
 
-        # まだ規定回数に達していなければ会話を続ける
+        # 進行
         current_turns = len(st.session_state.conversation_log)
         
         if current_turns < max_turns:
-            # プログレスバー
             progress_bar = st.progress(current_turns / max_turns)
             
-            # 次の話者
             current_idx = current_turns % num_agents
             agent = agents_config[current_idx]
             chat = chats[current_idx]
@@ -148,11 +146,9 @@ if st.session_state.is_running:
                     placeholder = st.empty()
                     with st.spinner(f"{agent['name']}が思考中..."):
                         try:
-                            # 発言生成
                             response = chat.send_message(f"直前の発言: {last_message}\n\nこれを受けて発言してください。")
                             placeholder.markdown(response.text)
                             
-                            # ログ保存
                             st.session_state.conversation_log.append({
                                 "name": agent["name"],
                                 "icon": agent["icon"],
@@ -160,18 +156,16 @@ if st.session_state.is_running:
                             })
                             
                             time.sleep(speed)
-                            st.rerun() # 自分自身を呼び出して次のターンへ（これが安定の秘訣）
+                            st.rerun()
                             
                         except Exception as e:
                             st.error(f"エラー: {e}")
                             st.session_state.is_running = False
-
         else:
-            # 規定回数終了 -> 要約へ
             st.session_state.is_running = False
-            progress_bar = st.progress(1.0)
+            st.progress(1.0)
             
-            # 要約生成（まだ生成していなければ）
+            # 要約生成
             if not st.session_state.summary_text:
                 with st.status("📝 議論をまとめています...", expanded=True):
                     full_text = "\n\n".join([f"【{x['name']}】\n{x['text']}" for x in st.session_state.conversation_log])

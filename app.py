@@ -39,8 +39,9 @@ with st.sidebar:
                 model_options = sorted(fetched_models, reverse=True) # 新しい順に並べる
                 st.success("✅ モデル一覧を取得しました")
             
-        except Exception:
-            st.warning("モデル一覧の取得に失敗しました。デフォルトリストを使用します。")
+        except Exception as e:
+            st.error(f"エラー詳細: {e}")  # ← これを追加！本当の原因を表示させる
+            st.warning("一覧取得に失敗したため、基本リストを使います。")
 
     model_name = st.selectbox("使用するモデル", model_options)
     

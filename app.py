@@ -1,128 +1,169 @@
 import streamlit as st
 from google import genai
+from google.genai import types
 import time
 
 # --- ページ設定 ---
-st.set_page_config(page_title="AIマルチトーク", page_icon="💬", layout="wide")
+st.set_page_config(page_title="AIマルチトーク Pro", page_icon="📝", layout="wide")
 
 # --- サイドバー：設定エリア ---
 with st.sidebar:
     st.header("⚙️ システム設定")
     
-    # 1. APIキー入力（パスワード形式で隠す）
+    # 1. APIキー入力
     user_api_key = st.text_input(
         "Google API Keyを入力",
         type="password",
-        help="Google AI Studioで取得したAPIキーを入力してください。このキーは保存されません。"
+        help="APIキーを入力すると、利用可能なモデル一覧が自動で読み込まれます。"
     )
     
     st.divider()
     
-    # 2. 基本パラメータ
-    model_name = st.selectbox("モデル選択", ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash"])
-    max_turns = st.slider("会話の往復回数（ターン数）", min_value=3, max_value=20, value=6)
+    # 2. モデル選択（APIキーから動的に取得）
+    model_options = ["gemini-2.0-flash", "gemini-1.5-flash"] # デフォルト（キーがない場合）
+    
+    if user_api_key:
+        try:
+            # 一時的にクライアントを作ってモデル一覧を取得
+            temp_client = genai.Client(api_key=user_api_key)
+            fetched_models = []
+            # APIからモデルリストを取得
+            for m in temp_client.models.list():
+                # "generateContent" に対応し、かつ "gemini" を含むモデルだけ抽出
+                if "generateContent" in m.supported_generation_methods and "gemini" in m.name:
+                    # "models/" という接頭辞を削除してリストに追加
+                    clean_name = m.name.replace("models/", "")
+                    fetched_models.append(clean_name)
+            
+            if fetched_models:
+                model_options = sorted(fetched_models, reverse=True) # 新しい順に並べる
+                st.success("✅ モデル一覧を取得しました")
+            
+        except Exception:
+            st.warning("モデル一覧の取得に失敗しました。デフォルトリストを使用します。")
+
+    model_name = st.selectbox("使用するモデル", model_options)
+    
+    # 3. パラメータ（最大数を50に増加）
+    max_turns = st.slider("会話の往復回数（ターン数）", min_value=3, max_value=50, value=6)
     speed = st.slider("表示速度（待機秒数）", 0.5, 5.0, 1.5)
 
 # --- メインエリア ---
-st.title("💬 AIマルチトーク・シミュレーター")
-st.markdown("APIキーを入れて、好きなキャラクターとテーマを設定すれば、AI同士が勝手に会話します。")
+st.title("📝 AIマルチトーク Pro")
+st.markdown("議論の設定を行うと、AIが会話を行い、最後に**要約と結論**をまとめます。")
 
-# 3. テーマ設定
-topic = st.text_input("🗣️ 議論・会話のテーマ", value="きのこの山 vs たけのこの里、どっちが美味しい？")
+# テーマ設定
+topic = st.text_input("🗣️ 議論・会話のテーマ", value="")
 
-# 4. エージェント（人格）の設定
+# キャラクター設定
 st.subheader("👥 キャラクター設定")
 num_agents = st.number_input("参加人数", min_value=2, max_value=4, value=2)
 
-# 動的に入力欄を作る
 agents_config = []
 cols = st.columns(num_agents)
 
-# デフォルトのプリセット（入力の手間を省くため）
 default_roles = [
-    {"name": "熱血な肯定派", "icon": "🔥", "prompt": "あなたは情熱的な肯定派です。テーマの素晴らしさを熱弁してください。"},
-    {"name": "冷静な否定派", "icon": "🧊", "prompt": "あなたは冷徹な否定派です。論理的に相手の欠点を指摘してください。"},
-    {"name": "陽気な審判", "icon": "🤡", "prompt": "あなたは陽気な野次馬です。議論を茶化しながら盛り上げてください。"},
-    {"name": "謎の哲学者", "icon": "🧙‍♂️", "prompt": "あなたは物事を深く考えすぎる哲学者です。すぐに話を宇宙の真理に結びつけてください。"}
+    {"name": "肯定派", "icon": "⭕", "prompt": "あなたは肯定的な立場です。メリットを強調し、未来志向で議論してください。"},
+    {"name": "否定派", "icon": "❌", "prompt": "あなたは批判的な立場です。リスクや懸念点を指摘し、慎重な議論を求めてください。"},
+    {"name": "モデレーター", "icon": "⚖️", "prompt": "あなたは公平な司会者です。議論を整理し、両者の意見を引き出してください。"},
+    {"name": "自由人", "icon": "🦄", "prompt": "あなたは独自の視点を持つ自由人です。議論の枠にとらわれない発想を出してください。"}
 ]
 
 for i, col in enumerate(cols):
     with col:
         st.markdown(f"**参加者 {i+1}**")
-        # デフォルト値があればそれを使う、なければ空
         def_role = default_roles[i] if i < len(default_roles) else default_roles[0]
         
         name = st.text_input(f"名前", value=def_role["name"], key=f"name_{i}")
-        icon = st.text_input(f"アイコン(絵文字)", value=def_role["icon"], key=f"icon_{i}")
-        prompt = st.text_area(f"性格・役割", value=def_role["prompt"], height=150, key=f"prompt_{i}")
+        icon = st.text_input(f"アイコン", value=def_role["icon"], key=f"icon_{i}")
+        prompt = st.text_area(f"役割設定", value=def_role["prompt"], height=100, key=f"prompt_{i}")
         
-        agents_config.append({
-            "name": name,
-            "icon": icon,
-            "system_instruction": prompt
-        })
+        agents_config.append({"name": name, "icon": icon, "system_instruction": prompt})
 
-# --- 実行ボタン ---
-if st.button("🚀 シミュレーション開始！", type="primary"):
+# --- 実行ロジック ---
+if st.button("🚀 議論を開始する", type="primary"):
     if not user_api_key:
-        st.error("⚠️ 左のサイドバーでAPIキーを入力してください！")
+        st.error("APIキーを入力してください！")
         st.stop()
     
-    if not topic:
-        st.error("⚠️ テーマを入力してください！")
-        st.stop()
-
-    # クライアント初期化
+    # 全体の履歴を保存するリスト（要約用）
+    full_conversation_log = []
+    
     try:
         client = genai.Client(api_key=user_api_key)
         
-        # 各エージェントのチャットセッションを作成
+        # 各エージェントの準備
         chats = []
         for agent in agents_config:
-            # 必須: キャラクター設定をシステムプロンプトに埋め込む
-            sys_inst = f"あなたの名前は「{agent['name']}」です。\n設定：{agent['system_instruction']}\n\n会話のテーマは「{topic}」です。他の参加者と会話してください。"
-            
-            chat_session = client.chats.create(
-                model=model_name,
-                config={"system_instruction": sys_inst}
-            )
-            chats.append(chat_session)
+            sys_inst = f"名前：{agent['name']}\n役割：{agent['system_instruction']}\nテーマ：{topic}\n他の参加者と議論してください。"
+            chats.append(client.chats.create(model=model_name, config={"system_instruction": sys_inst}))
 
-        # チャット表示用コンテナ
         chat_container = st.container()
+        last_message = f"テーマ「{topic}」について議論を開始してください。まずは{agents_config[0]['name']}さんからどうぞ。"
         
-        # 最初のキックオフメッセージ
-        last_message = f"これより、「{topic}」について会話を始めてください。まずは{agents_config[0]['name']}からお願いします。"
-        
-        # ループ開始
+        # === 議論ループ ===
         count = 0
+        progress_bar = st.progress(0)
+        
         while count < max_turns:
-            # 誰のターンか計算（0, 1, 2... と順番に回す）
             current_idx = count % num_agents
-            current_agent = agents_config[current_idx]
-            current_chat = chats[current_idx]
+            agent = agents_config[current_idx]
+            chat = chats[current_idx]
             
             with chat_container:
-                with st.chat_message(current_agent["name"], avatar=current_agent["icon"]):
-                    message_placeholder = st.empty()
+                with st.chat_message(agent["name"], avatar=agent["icon"]):
+                    placeholder = st.empty()
                     try:
-                        # 前の発言を入力として渡す
-                        response = current_chat.send_message(f"直前の発言: {last_message}\n\nこれを受けて、あなたのキャラクターとして発言してください。")
+                        # 発言生成
+                        response = chat.send_message(f"直前の発言: {last_message}\n\nこれを受けて発言してください。")
+                        placeholder.markdown(response.text)
                         
-                        # 表示
-                        message_placeholder.markdown(f"**{current_agent['name']}**: {response.text}")
-                        
-                        # 次の人へのメッセージとして保存
-                        last_message = f"{current_agent['name']}の発言: {response.text}"
+                        # ログ保存
+                        last_message = f"{agent['name']}: {response.text}"
+                        full_conversation_log.append(f"【{agent['name']}】\n{response.text}")
                         
                     except Exception as e:
-                        st.error(f"エラーが発生しました: {e}")
+                        st.error(f"エラー: {e}")
                         break
             
             count += 1
+            progress_bar.progress(count / max_turns)
             time.sleep(speed)
         
-        st.success("🎉 会話終了！")
+        # === 最終要約フェーズ ===
+        st.divider()
+        st.subheader("📊 議論のまとめと結論")
         
+        with st.status("📝 AIが議事録を作成中...", expanded=True) as status:
+            try:
+                # ログを一つのテキストに結合
+                log_text = "\n\n".join(full_conversation_log)
+                
+                # 要約用のプロンプト
+                summary_prompt = f"""
+                あなたは優秀な書記官です。以下の議論ログを読んで、レポートを作成してください。
+
+                ## 議論ログ
+                {log_text}
+
+                ## 出力フォーマット
+                1. **議論のテーマ**: {topic}
+                2. **各参加者の主な主張**: (箇条書きで簡潔に)
+                3. **議論の要約**: (対話の流れを要約)
+                4. **最終結論**: (議論から導き出される結論、または合意点、残された課題)
+                """
+                
+                # 要約生成（新しいチャットセッションを使わず、単発で生成）
+                summary_response = client.models.generate_content(
+                    model=model_name,
+                    contents=summary_prompt
+                )
+                
+                st.markdown(summary_response.text)
+                status.update(label="✅ 作成完了！", state="complete", expanded=True)
+                
+            except Exception as e:
+                st.error(f"要約の作成中にエラーが発生しました: {e}")
+
     except Exception as e:
-        st.error(f"APIキーが無効か、エラーが発生しました: {e}")
+        st.error(f"開始できませんでした。APIキーやモデルを確認してください: {e}")
